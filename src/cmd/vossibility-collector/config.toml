@@ -1,0 +1,180 @@
+elasticsearch = "elasticsearch"
+
+# A GitHub API token gives you more API request per hour.
+github_api_token = ""
+
+# A roll is necessary to archive the state of the repository at a regular
+# interval, allowing us to trace the modifications over time.
+sync_periodicity = "hourly"
+
+# NSQ global configuration
+#   - channel: identifier of the application
+#   - lookupd: location of the lookup daemon (format: `address:port`)
+
+[nsq]
+channel = "ghollector"
+lookupd = "lookupd:4161"
+
+# Mapping defines a list of field to exclude from Elastic Search analysis, such
+# as user and label names that we don't want to split.
+#
+# The `sync_mapping` command generates and posts this as a default mapping for
+# all repositories. You might want to manage this manually if there is some
+# other data in your Elastic Search cluster, or for more specific needs.
+
+[mapping]
+not_analyzed = [
+    "company",
+    "labels",
+    "login",
+    "milestone",
+    "*url"
+]
+
+# List of user-defined function.
+
+[functions]
+example_fn = "/fn/example_fn"
+
+# List of repositories to monitor. For each repository:
+#   - user: GitHub user name
+#   - repo: GitHub repository name
+#   - topic: associated NSQ topic to listen for events
+#   - events[="default"]: identifier of the event set to subscribe to
+
+[repositories]
+
+    [repositories.vault]
+    user = "LaureVergeron"
+    repo = "IronMan-Vault"
+    topic = "hooks-vault"
+    #start_index = 8000 # We don't expect anything relevant to move before
+
+# Event sets definition: each set defines a list of events to subscribe to, and
+# are referenced by repositories definitions. In an event set definition, each
+# GitHub event type is associated with a transformation identifier.
+#
+# Note that pull requests and issues are specific in that they are always
+# queried and archived.
+
+[event_set]
+
+    [event_set.default]
+    commit_comment = "commit_comment_event"
+    fork = "fork_event"
+    issue_comment = "issue_comment_event"
+    issues = "issues_event"
+    pull_request = "pull_request_event"
+    pull_request_review_comment = "pull_request_review_comment_event"
+    watch = "watch_event"
+
+    # The "snapshot_issue" event is mandatory as Issues are always stored.
+    snapshot_issue = "issue"
+
+    # The "snapshot_pull_request" event is mandatory as Pull Request are always
+    # stored.
+    snapshot_pull_request = "pull_request"
+
+# Transformations to apply to different entity type before forwarding to the
+# storage backend. We usually don't need every field provided by GitHub,
+# especially the various links, user, and repository information. We also
+# sometimes need to rename or move the fields around.
+#
+# Each table element must associate a destination field identifier to a Golang
+# text/template that will be applied to the received payload.
+#
+# All messages have an implicit _type attribute that defaults to the type of
+# the event (but can be overriden).
+
+[transformations]
+
+    [transformations.issue]
+    assignee = "{{ .assignee }}"
+    author = "{{ user_data .user.login }}"
+    body = "{{ .body }}"
+    closed_at = "{{ .closed_at }}"
+    comments = "{{ .comments }}"
+    created_at = "{{ .created_at }}"
+    labels = "{{ range .labels }}{{ .name }}{{ end }}"
+    locked = "{{ .locked }}"
+    milestone = "{{ if .milestone }}{{ .milestone.title }}{{end}}"
+    number = "{{ .number }}"
+    opened_days = "{{ if .closed_at }}{{ days_difference .closed_at .created_at }}{{ end }}"
+    repository = "{{ context.Repository.FullName }}"
+    state = "{{ .state }}"
+    updated_at = "{{ .updated_at }}"
+
+    [transformations.pull_request]
+    additions = "{{ .additions }}"
+    author = "{{ user_data .user.login }}"
+    body = "{{ .body }}"
+    changed_files = "{{ .changed_files }}"
+    closed_at = "{{ .closed_at }}"
+    comments = "{{ .comments }}"
+    commits = "{{ .commits }}"
+    created_at = "{{ .created_at }}"
+    deletions = "{{ .deletions }}"
+    labels = "{{ range .labels }}{{ .name }}{{ end }}"
+    locked = "{{ .locked }}"
+    mergeable = "{{ .mergeable }}"
+    merged = "{{ .merged }}"
+    merged_at = "{{ .merged_at }}"
+    merged_by = "{{ if .merged_by }}{{ user_data .merged_by.login }}{{ end }}"
+    number = "{{ .number }}"
+    opened_days = "{{ if .closed_at }}{{ days_difference .closed_at .created_at }}{{ end }}"
+    repository = "{{ context.Repository.FullName }}"
+    state = "{{ .state }}"
+    title = "{{ .title }}"
+    updated_at = "{{ .updated_at }}"
+
+    [transformations.commit_comment_event]
+    action = "{{ .action }}"
+    body = "{{ .comment.body }}"
+    repository = "{{ context.Repository.FullName }}"
+    commit_id = "{{ .comment.commit_id }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.fork_event]
+    forks = "{{ .repository.forks }}"
+    repository = "{{ context.Repository.FullName }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.issue_comment_event]
+    _type = "{{ if .issue.pull_request }}pull_request_comment{{ else }}issue_comment{{ end }}"
+    action = "{{ .action }}"
+    body = "{{ .comment.body }}"
+    number = "{{ if .issue.pull_request }}{{ .issue.pull_request.number }}{{ else }}{{ .issue.number }}{{ end }}"
+    repository = "{{ context.Repository.FullName }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.issues_event]
+    _type = "issue"
+    _snapshot_id = "number"
+    _snapshot_field = "item"
+    action = "{{ .action }}"
+    item = "{{ apply_transformation \"issue\" .issue }}"
+    number = "{{ .issue.number }}"
+    repository = "{{ context.Repository.FullName }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.pull_request_review_comment_event]
+    action = "{{ .action }}"
+    body = "{{ .comment.body }}"
+    labels = "{{ .pull_request.labels }}"
+    number = "{{ .pull_request.number }}"
+    repository = "{{ context.Repository.FullName }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.pull_request_event]
+    _snapshot_id = "number"
+    _snapshot_field = "item"
+    action = "{{ .action }}"
+    item = "{{ apply_transformation \"pull_request\" .pull_request }}"
+    number = "{{ .pull_request.number }}"
+    repository = "{{ context.Repository.FullName }}"
+    sender = "{{ user_data .sender.login }}"
+
+    [transformations.watch_event]
+    sender = "{{ user_data .sender.login }}"
+    repository = "{{ context.Repository.FullName }}"
+    stargazers_count = "{{ .repository.stargazers_count }}"
