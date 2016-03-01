@@ -155,7 +155,7 @@ func (r *Repository) StateIndexForTimestamp(timestamp time.Time) string {
 // this repository's snapshot data (such as the latest state of each pull
 // request and issue).
 func (r *Repository) SnapshotIndex() string {
-	return fmt.Sprintf("%ssnapshot", r.IndexPrefix())
+	return fmt.Sprintf("logstash-%ssnapshot", r.IndexPrefix())
 }
 
 // IsSubscribed returns whether we should subscribe for a particular GitHub
